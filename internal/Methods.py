@@ -37,7 +37,8 @@ def connectDB(logger:LogManager) -> MySQLPool:
     """
     for host in DBData.DBHosts.value:
         try:
-            mysqlPool = MySQLPool(user=DBData.DBUser.value, password=DBData.DBPassword.value, dbName=DBData.DBName.value, host=host, logOnTerminal=4)
+            port = DBData.DBHosts.value[host]
+            mysqlPool = MySQLPool(user=DBData.DBUser.value, password=DBData.DBPassword.value, dbName=DBData.DBName.value, host=host, port=port, logOnTerminal=4)
             mysqlPool.execute(f"SELECT DATABASE();")
             logger.success("DB", f"connected to: {host}")
             return mysqlPool

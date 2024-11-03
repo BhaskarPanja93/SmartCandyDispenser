@@ -36,9 +36,9 @@ const int ServoChannel = 0;
 
 // Servo Motor related variables and functions
 Servo servoObj;
-const int ServoRefillPos = 35; // Degrees to write to fill new candy
-const int ServoDropPos = 0; // Degrees to write to drop the filled candy
-int servoCurrentPos = 25; // Initialise the board with a 25 degree value (jerk start) to allow clearing blockages
+const int ServoRefillPos = 75; // Degrees to write to fill new candy
+const int ServoDropPos = 20; // Degrees to write to drop the filled candy
+int servoCurrentPos = ServoRefillPos-5; // Initialise the board with a 5 degree difference value (jerk start) to allow clearing blockages
 void refillCandy(bool instant)
 {
     // Use this function to align moving port with IN-PORT to allow new candy to fill
@@ -80,9 +80,9 @@ int LCD_R = 0; // Last known cursor position (R)
 int LCD_C = 0; // Last known cursor position (C)
 int LCD_R_MAX = 4; // Maximum usable rows
 int LCD_C_MAX = 20; // Maximum usable columns
-void __print(String nextWord, char c)
+void __printLCD(String nextWord, char c)
 {
-    // DONT CALL THIS FUNCTION!! Call `print()` instead
+    // DONT CALL THIS FUNCTION!! Call `printLCD()` instead
     // Private function to print 1 raw word, 
     // :param nextWord: The String word to print
     // :param c: Which character caused the word separation ('\n', '\0', ' ')
@@ -99,12 +99,12 @@ void __print(String nextWord, char c)
             return;
         }
     }
-    cursor(LCD_R, LCD_C); // Place cursor at the exact position
+    cursorLCD(LCD_R, LCD_C); // Place cursor at the exact position
     if (nextWord.length()!=0) nextWord += " "; // If word was not empty, add a space at the end of word
     LCD.print(nextWord); // Print the word on the LCD
     LCD_C += nextWord.length(); // Increment cursor position
 }
-void print(String s, bool newLine)
+void printLCD(String s, bool newLine)
 {
     // Print String based variables on the LCD with automatic line shifting based on words
     // Makes sure any word isnt split and displayed over 2 lines
@@ -113,28 +113,28 @@ void print(String s, bool newLine)
     // :param newLine: boolean to signify if current strign should start on a new line
     if (s[s.length()-1] != '\0' || s[s.length()-1] != ' ' || s[s.length()-1] != '\n') s+=" "; // If string doesnt end with a end character, manually add it
     String nextWord = "";
-    if (newLine) __print("", '\n'); // Print an empty line if newLine is positive
+    if (newLine) __printLCD("", '\n'); // Print an empty line if newLine is positive
     for (int index=0; index<s.length();index++)
     {
         // Keep adding character from the string into a variable nextWord till an end character is received
         if (s[index]==' ' || s[index]=='\n' || s[index]=='\0')
         {
             // Reached an end character, print the formed word
-            __print(nextWord, s[index]);
+            __printLCD(nextWord, s[index]);
             nextWord = "";
         } else {
             nextWord += s[index];
         }
     }
-    __print(nextWord, '\0');
+    __printLCD(nextWord, '\0');
 }
-void clear()
+void clearLCD()
 {
     // Clear the screen and bring the cursor back to initial
     LCD.clear();
-    cursor(0, 0);
+    cursorLCD(0, 0);
 }
-void cursor(int r, int c)
+void cursorLCD(int r, int c)
 {
     // manually set cursor position
     // :param r: Row to set cursor to
@@ -199,16 +199,16 @@ void ensureWiFi()
     {
         // Assign SSID and PASSWORD and start connecting
         WiFi.begin(ssid, password);
-        clear();
-        print("Connecting to WiFi", false);
+        clearLCD();
+        printLCD("Connecting to WiFi", false);
         while(WiFi.status() != WL_CONNECTED)
         {
             // Print a dot every 500ms till WiFi connects
             delay(500);
-            print(".", false);
+            printLCD(".", false);
         }
-        clear();
-        print("WiFi Connected", false);
+        clearLCD();
+        printLCD("WiFi Connected", false);
         delay(1000);
     }
 }
@@ -348,18 +348,18 @@ void handleBearerReceived(JsonDocument response)
 {
     // Save new Bearer
     // :param response: JsonDocument holding new bearer
-    clear();
-    print("Registered Board in Server", false);
+    clearLCD();
+    printLCD("Registered Board in Server", false);
     writeBearer(response["BEARER"]);
     delay(2000);
 }
 void handleParentOTP()
 {
     // Wait for ParentOTP to be entered
-    clear();
-    print("Board OTP:", false);
-    print(BoardOTP, true);
-    print("NEW Parent OTP:", true);
+    clearLCD();
+    printLCD("Board OTP:", false);
+    printLCD(BoardOTP, true);
+    printLCD("NEW Parent OTP:", true);
     String ParentOTP = "";
     while (HIGH)
     {
@@ -369,8 +369,8 @@ void handleParentOTP()
         {
             // Button press before 5000ms timeout
             ParentOTP += button; // Add new button pressed to the existing OTP being entered
-            cursor(3,0); // Set cursor to 3rd row
-            print(ParentOTP, false); // Display the OTP entered so far
+            cursorLCD(3,0); // Set cursor to 3rd row
+            printLCD(ParentOTP, false); // Display the OTP entered so far
         }
         else if (ParentOTP.length() != 0) 
         {
@@ -384,27 +384,27 @@ void handleOTPSubmitResponse(JsonDocument OTPResponse)
 {
     // Check response for ParentOTP
     // :param OTPResponse: JsonDocument holding the response after submitting ParentOTP
-    clear();
+    clearLCD();
     if (OTPResponse["STATUS"] == "WAITING FOR PARENT")
     {
         // OTP was correct but parent didnt enter BoardOTP yet
-        clear();
-        print("Board OTP:", false);
-        print(BoardOTP, true);
-        print("Restart Board to change Parent OTP", true);
+        clearLCD();
+        printLCD("Board OTP:", false);
+        printLCD(BoardOTP, true);
+        printLCD("Restart Board to change Parent OTP", true);
     }
     else if (OTPResponse["STATUS"] == "CONNECTED TO PARENT")
     {
         // OTP was correct and parent had already entered BoardOTP, so connected instantly
-        clear();
-        print("Connection Successful!", false);
+        clearLCD();
+        printLCD("Connection Successful!", false);
         delay(2000);
     }
     else if (OTPResponse["STATUS"] == "INVALID OTP")
     {
         // OTP was incorrect
-        clear();
-        print("Invalid OTP", false);
+        clearLCD();
+        printLCD("Invalid OTP", false);
         delay(2000);
         handleParentOTP();
     }
@@ -432,9 +432,9 @@ String parseQuestion(JsonDocument response)
 {
     // Print the question and the options
     // :param response: JsonDocument with the question and options and the question identifier
-    clear();
+    clearLCD();
     String sentAt = response["T"]; // Question Instance identifier (used in server)
-    print(response["Q"], false); // Question on line 1
+    printLCD(response["Q"], false); // Question on line 1
     for (int optionIndex=1; optionIndex<response["O"].size()+1; optionIndex++)
     {
         // Decorate each option and display
@@ -444,7 +444,7 @@ String parseQuestion(JsonDocument response)
         option += optionIndex;
         option += ")";
         option += optionText;
-        print(option, true); // New line for every option
+        printLCD(option, true); // New line for every option
     }
     return sentAt;
 }
@@ -458,36 +458,36 @@ void parseAnswerResponse(JsonDocument response)
         if (response["C"] == true)
         {
             // Option input was right
-            clear();
-            print("Correct", false);
+            clearLCD();
+            printLCD("Correct", false);
         }
         else
         {
             // Option input was wrong
             String correctAnswer = response["O"];
-            clear();
-            print("Wrong", false);
-            print("Answer is: "+correctAnswer, true);
+            clearLCD();
+            printLCD("Wrong", false);
+            printLCD("Answer is: "+correctAnswer, true);
         }
         if (response["D"]==true) 
         {
             // Drop a candy
-            print("Enjoy your treat :)", true);
+            printLCD("Enjoy your treat :)", true);
             dropCandy(false); // Slowly drop candy (moving part always stays in filled position when idle)
             delay(500); // Wait 500ms for candy to drop
             refillCandy(false); // Slowly send backmoving part to refill position
         }
         else 
         {
-            print("Score: "+score, true);
+            printLCD("Score: "+score, true);
             delay(3000);
         }
     }
     else
     {
         // Error occured in server trying to process the option provided
-        clear();
-        print("Server didnt know the answer :(", false);
+        clearLCD();
+        printLCD("Server didnt know the answer :(", false);
         delay(3000);
     }
 }
@@ -543,16 +543,16 @@ void loop()
                 if (a.response["PURPOSE"] == "SCORE") parseAnswerResponse(a.response); // Process the answer response
                 else 
                 {
-                    clear();
-                    print("Server didnt send a proper Response", false);
+                    clearLCD();
+                    printLCD("Server didnt send a proper Response", false);
                     delay(2000);
                 }
             }
         }
         else 
         {
-            clear();
-            print("Server didnt send a proper Question", false);
+            clearLCD();
+            printLCD("Server didnt send a proper Question", false);
             delay(2000);
         }
     }

@@ -1,7 +1,8 @@
 from gevent.monkey import patch_all
-patch_all()
+patch_all() # Monkey patch everything before anything else (converts sync functions to async functions)
 
 
+from typing import Callable, Any
 from json import loads, dumps
 from random import shuffle
 from time import sleep, time
@@ -16,27 +17,33 @@ from internal.Methods import *
 
 
 
-def getSenderBoard(parentRequired:bool):
+def getSenderBoard(parentRequired:bool) -> Callable[[Any], Callable[[], dict[str, str | Any] | dict[str, str | bool] | dict[str, str] | Any]]:
+    """
+    Decorator to fetch BoardID of the request sender, incase the board isn't authenticated,
+    create a new board in server and send them a new Bearer for their future requests
+    :param parentRequired: Boolean to signify if the board needs to be assigned to a parent for the later function to be executed
+    :return:
+    """
     def decorator(continueFunction):
         @wraps(continueFunction)
         def wrapper():
-            bearer = request.headers.get("Bearer", "")
-            boardID = None if not bearer else readBoardBearer(bearer)
+            bearer = request.headers.get("Bearer", "") # Check bearer in the Header
+            boardID = None if not bearer else readBoardBearer(bearer) # Fetch known BoardID from Bearer
             if boardID:
                 if parentRequired:
                     received = SQLConn.execute(f"SELECT ParentID from boards where BoardID=\"{boardID}\"")
-                    if received and received[0]["ParentID"]: return continueFunction(boardID)
+                    if received and received[0]["ParentID"]: return continueFunction(boardID) # Continue later function
                     if not SQLConn.execute(f"SELECT BoardID from pending_connections where BoardID=\"{boardID}\""):
                         OTP = generateBoardOTP(boardID)
                         print({"PURPOSE": "CONN", "OTP": OTP})
-                        return {"PURPOSE": "CONN", "OTP": OTP}
+                        return {"PURPOSE": "CONN", "OTP": OTP} # Send new OTP, if not already made
                     print( {"PURPOSE":"ACCEPT", "STATUS":False})
-                    return {"PURPOSE":"ACCEPT", "STATUS":False}
-                else: return continueFunction(boardID)
+                    return {"PURPOSE":"ACCEPT", "STATUS":False} # Send Connection-Not-Accepted-By-Parent response, if OTP is present yet parent didn't accept yet
+                else: return continueFunction(boardID) # Continue later function
             else:
                 bearer = createNewBoard()
                 print({"PURPOSE": "AUTH", "BEARER": bearer})
-                return {"PURPOSE": "AUTH", "BEARER": bearer}
+                return {"PURPOSE": "AUTH", "BEARER": bearer} # Bearer unavailable or invalid
         return wrapper
     return decorator
 
@@ -54,27 +61,39 @@ class UserClass:
         self.ByViewerID = "VID"
         self.ByUserName = "UN"
 
-    def getParentUserName(self, By, value: str):
+    def getParentUserName(self, By, value: str) -> None|str:
+        """
+        Fetch Parent's username from any other parameter
+        :param By: type of parameter
+        :param value: value of parameter
+        :return:
+        """
         if not value: return
-        if By == self.ByParentID:
+        if By == self.ByParentID: # Parameter is parentID
             received = SQLConn.execute(f"SELECT UserName from parent_auth where ParentID=\"{value}\" limit 1")
             if received:
                 received = received[0]
                 return received.get("UserName")
-        elif By == self.ByViewerID:
+        elif By == self.ByViewerID: # Parameter is viewerID
             received = SQLConn.execute(f"SELECT ParentID from parent_sessions where ViewerID=\"{value}\" limit 1")
             if received:
                 received = received[0]
                 return self.getParentUserName(self.ByParentID, received.get("ParentID").decode())
 
-    def getParentID(self, By, value):
+    def getParentID(self, By, value) -> None|str:
+        """
+        Fetch Parent's ParentID from any other parameter
+        :param By: type of parameter
+        :param value: value of parameter
+        :return:
+        """
         if not value: return
-        if By == self.ByUserName:
+        if By == self.ByUserName: # Parameter is Username
             received = SQLConn.execute(f"SELECT ParentID from parent_auth where UserName=\"{value}\" limit 1")
             if received:
                 received = received[0]
                 return received.get("ParentID").decode()
-        elif By == self.ByViewerID:
+        elif By == self.ByViewerID: # Parameter is ViewerID
             received = SQLConn.execute(f"SELECT ParentID from parent_sessions where ViewerID=\"{value}\" limit 1")
             if received:
                 received = received[0]
@@ -182,7 +201,7 @@ def registerNewParent(viewerObj:BaseViewer, form:dict):
         sendRegisterForm(viewerObj)
     else:
         while True:
-            parentID = STR_GEN().AlphaNumeric(50, 50)
+            parentID = stringGen.AlphaNumeric(50, 50)
             if not SQLConn.execute(f"SELECT UserName from parent_auth where parentID=\"{parentID}\" limit 1"):
                 SQLConn.execute(f"INSERT INTO parents values (\"{parentID}\", \"{person}\", now(), \"\")")
                 SQLConn.execute(f"INSERT INTO parent_auth values (\"{parentID}\", \"{username}\", \"{generate_password_hash(password)}\")")
@@ -211,9 +230,9 @@ def createNewChild(viewerObj: BaseViewer, form:dict):
     parentID = getKnownLoggedInParentID(viewerObj)
     childName = form.get("name", "")
     while True:
-        childID = STR_GEN().AlphaNumeric(50, 50)
+        childID = stringGen.AlphaNumeric(50, 50)
         if not SQLConn.execute(f"SELECT ChildID from children where ChildID=\"{childID}\" limit 1"):
-            SQLConn.execute(f"INSERT INTO children values (\"{childID}\", \"{parentID}\", \"\", \"{childName}\", 0, now())")
+            SQLConn.execute(f"INSERT INTO children values (\"{childID}\", \"{parentID}\", \"\", \"{childName}\", 0, 0, now())")
             sendIdleChildren(viewerObj)
             return childID
 
@@ -225,6 +244,7 @@ def deleteOldChild(viewerObj: BaseViewer, childID:str):
         received = received[0]
         if received["BoardID"]: return print("Child not idle")
     SQLConn.execute(f"DELETE from children where ChildID=\"{childID}\" and ParentID=\"{parentID}\"")
+    SQLConn.execute(f"DELETE from questionhistory where ChildID=\"{childID}\"")
     sendIdleChildren(viewerObj)
 
 
@@ -313,6 +333,7 @@ def deleteOwnedBoard(viewerObj: BaseViewer, boardID:str):
         received = received[0]
         if received["ChildID"]: return print("Board is not idle")
     SQLConn.execute(f"DELETE from boards where BoardID=\"{boardID}\" and ParentID=\"{parentID}\"")
+    SQLConn.execute(f"DELETE from pending_connections where BoardID=\"{boardID}\"")
     sendIdleChildren(viewerObj)
 
 
@@ -321,6 +342,29 @@ def deleteAssignment(viewerObj:BaseViewer, boardID:str, childID:str):
     SQLConn.execute(f"UPDATE boards set ChildID=\"\" where BoardID=\"{boardID}\" and parentID=\"{parentID}\"")
     SQLConn.execute(f"UPDATE children set BoardID=\"\" where ChildID=\"{childID}\" and parentID=\"{parentID}\"")
 
+
+def addNewQuestion(viewerObj:BaseViewer, form:dict):
+    subject = form.get("subject", "").strip()
+    questionText = form.get("question", "").strip()
+    correct = form.get("correct", "").strip()
+    incorrect1 = form.get("incorrect1", "").strip()
+    incorrect2 = form.get("incorrect2", "").strip()
+    incorrect3 = form.get("incorrect3", "").strip()
+    incorrect4 = form.get("incorrect4", "").strip()
+    incorrect5 = form.get("incorrect5", "").strip()
+    incorrect = [incorrect1, incorrect2, incorrect3, incorrect4, incorrect5]
+    if subject not in ["Maths", "English", "Science", "GK"]: return viewerObj.queueTurboAction("INVALID Subject", "newQuestionError", viewerObj.turboApp.methods.update)
+    elif not questionText: return viewerObj.queueTurboAction("INVALID Question", "newQuestionError", viewerObj.turboApp.methods.update)
+    elif not 0<len(questionText)<20: return viewerObj.queueTurboAction("Question too long (max 19 characters)", "newQuestionError", viewerObj.turboApp.methods.update)
+    elif not correct: return viewerObj.queueTurboAction("INVALID Correct Option", "newQuestionError", viewerObj.turboApp.methods.update)
+    elif correct in incorrect: return viewerObj.queueTurboAction("Correct Option same as incorrect", "newQuestionError", viewerObj.turboApp.methods.update)
+    for incorrectOption in incorrect:
+        if not incorrectOption: return viewerObj.queueTurboAction("INVALID Wrong Option", "newQuestionError", viewerObj.turboApp.methods.update)
+    while True:
+        questionID = stringGen.AlphaNumeric(50, 50)
+        if not SQLConn.execute(f"SELECT QuestionID from questionbank where QuestionID=\"{questionID}\""):
+            SQLConn.execute(f"INSERT into questionbank VALUES (\"{questionID}\", \"{subject}\", \"{questionText}\", \"{correct}\", '{dumps(incorrect)}')")
+            return viewerObj.queueTurboAction("Question Added", "newQuestionError", viewerObj.turboApp.methods.update)
 
 
 def webViewerJoined(viewerObj: BaseViewer):
@@ -370,6 +414,9 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
         sendAssigned(viewerObj)
         sendIdleBoards(viewerObj)
         sendIdleChildren(viewerObj)
+    elif purpose == "ADD_QUESTION":
+        sendNewQuestionForm(viewerObj)
+        addNewQuestion(viewerObj, form)
 
 
 def webViewerLeft(viewerObj: BaseViewer):
@@ -517,6 +564,9 @@ Your OTP is: {parentOTP}<br>
 <div id="idleChildren"></div>
 <br>Boards Idle:
 <div id="idleBoards"></div>
+<br>Add new Question:
+<div id="newQuestion"></div>
+<div id="newQuestionError"></div>
 """
     viewerObj.queueTurboAction(homepageHTML, "mainDiv", viewerObj.turboApp.methods.update)
     sendAssigned(viewerObj)
@@ -526,6 +576,7 @@ Your OTP is: {parentOTP}<br>
     sendPendingBoardVerifications(viewerObj)
     sendIdleChildren(viewerObj)
     sendIdleBoards(viewerObj)
+    sendNewQuestionForm(viewerObj)
 
 
 def renderAuthPage(viewerObj:BaseViewer):
@@ -538,6 +589,31 @@ f"""
     viewerObj.queueTurboAction(authPage, "mainDiv", viewerObj.turboApp.methods.update)
     sendRegisterForm(viewerObj)
     sendLoginForm(viewerObj)
+
+
+def sendNewQuestionForm(viewerObj:BaseViewer):
+    questionHTML = \
+        f"""
+    <form onsubmit="return submit_ws(this)">
+    {viewerObj.addCSRF("ADD_QUESTION")}
+    <label for="subject">Choose a Subject:</label>
+    <select name="subject">
+        <option value="Maths">Maths</option>
+        <option value="English">English</option>
+        <option value="Science">Science</option>
+        <option value="GK">GK</option>
+    </select>
+    <input type="text" name="question" placeholder="Type Question here" required><br>
+    <input type="text" name="correct" placeholder="Correct Answer here" required><br>
+    <input type="text" name="incorrect1" placeholder="Incorrect Option" required><br>
+    <input type="text" name="incorrect2" placeholder="Incorrect Option" required><br>
+    <input type="text" name="incorrect3" placeholder="Incorrect Option" required><br>
+    <input type="text" name="incorrect4" placeholder="Incorrect Option" required><br>
+    <input type="text" name="incorrect5" placeholder="Incorrect Option" required><br>
+    <button type="submit">Upload</button>
+    </form>
+    """
+    viewerObj.queueTurboAction(questionHTML, "loginForm", viewerObj.turboApp.methods.update)
 
 
 def sendLoginForm(viewerObj:BaseViewer):
@@ -671,19 +747,21 @@ def apiSubmitAnswer(BoardID:str|None):
         if optionsSelected == 0:
             SQLConn.execute(f"UPDATE questionhistory SET OptionSelected={option} WHERE BoardID=\"{BoardID}\" and SentAt=\"{sentAt}\"")
         isCorrect = option == correctOption
-        received = SQLConn.execute(f"SELECT ChildID, Points from children where BoardID=\"{BoardID}\"")
+        received = SQLConn.execute(f"SELECT ChildID, Points, CandiesReceived, from children where BoardID=\"{BoardID}\"")
         points = 0
         dropCandy = False
         if received:
             received = received[0]
             childID = received["ChildID"].decode()
             points = received["Points"]
+            candiesReceived = received["CandiesReceived"]
             if isCorrect:
                 points += 10
                 if points >= 30:
                     points = 0
                     dropCandy = True
-                SQLConn.execute(f"UPDATE children set Points={points} where ChildID=\"{childID}\"")
+                    candiesReceived += 1
+                SQLConn.execute(f"UPDATE children set Points={points}, CandiesReceived={candiesReceived} where ChildID=\"{childID}\"")
         response = {"PURPOSE":"SCORE", "V": True, "C":isCorrect, "O":options[correctOption-1], "S":str(points), "D":dropCandy}
         print(response)
         return response
