@@ -340,12 +340,13 @@ def acceptBoardAnswer(BoardID:str|None):
         if optionsSelected == 0:
             SQLConn.execute(f"UPDATE questionhistory SET OptionSelected={option} WHERE BoardID=\"{BoardID}\" and SentAt=\"{sentAt}\"")
         isCorrect = option == correctOption
-        received = SQLConn.execute(f"SELECT ChildID, Points, CandiesReceived from children where BoardID=\"{BoardID}\"")
+        received = SQLConn.execute(f"SELECT ChildID, ParentID, Points, CandiesReceived from children where BoardID=\"{BoardID}\"")
         points = 0
         dropCandy = False
         if received:
             received = received[0]
             childID = received["ChildID"].decode()
+            parentID = received["ParentID"].decode()
             points = received["Points"]
             candiesReceived = received["CandiesReceived"]
             if isCorrect:
@@ -355,6 +356,7 @@ def acceptBoardAnswer(BoardID:str|None):
                     dropCandy = True
                     candiesReceived += 1
                 SQLConn.execute(f"UPDATE children set Points={points}, CandiesReceived={candiesReceived} where ChildID=\"{childID}\"")
+                for viewer in liveCacheManager.activeParentIDs[parentID]["VIEWERS"]: viewer.queueTurboAction(str(points), f"{childID}_points", viewer.turboApp.methods.update)
         response = {"PURPOSE": "SCORE", "V": True, "C": isCorrect, "O": options[correctOption - 1], "S": str(points), "D": dropCandy}
         print(response)
         return response
