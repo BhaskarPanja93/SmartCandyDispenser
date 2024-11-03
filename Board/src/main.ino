@@ -22,8 +22,8 @@ const int ServoChannel = 12;
 #include <Servo.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-const String ssid = "Disguised Wi-fi";
-const String password = "9991337799";
+const String ssid = "RIYALAPPY";
+const String password = "riya@1410";
 const int I1 = 14;
 const int I2 = 12;
 const int I3 = 13;
@@ -36,8 +36,8 @@ const int ServoChannel = 0;
 
 // Servo Motor related variables and functions
 Servo servoObj;
-const int ServoRefillPos = 75; // Degrees to write to fill new candy
-const int ServoDropPos = 20; // Degrees to write to drop the filled candy
+const int ServoRefillPos = 62; // Degrees to write to fill new candy
+const int ServoDropPos = 6; // Degrees to write to drop the filled candy
 int servoCurrentPos = ServoRefillPos-5; // Initialise the board with a 5 degree difference value (jerk start) to allow clearing blockages
 void refillCandy(bool instant)
 {

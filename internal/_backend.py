@@ -1,7 +1,7 @@
 from gevent.monkey import patch_all
 patch_all() # Monkey patch everything before anything else (converts sync functions to async functions)
 
-
+from threading import Thread
 from typing import Callable, Any
 from json import loads, dumps
 from random import shuffle
@@ -179,52 +179,6 @@ def generateParentOTP(parentID:str):
     return OTP
 
 
-def registerNewParent(viewerObj:BaseViewer, form:dict):
-    username = form.get("username", "")
-    person = form.get("person", "")
-    password = form.get("password", "")
-    confirm_password = form.get("confirm", "")
-    if not username:
-        viewerObj.queueTurboAction("Invalid Username", "authWarning", viewerObj.turboApp.methods.update.value)
-        sendRegisterForm(viewerObj)
-    elif SQLConn.execute(f"SELECT UserName from parent_auth where UserName=\"{username}\" limit 1"):
-        viewerObj.queueTurboAction("Username Taken", "authWarning", viewerObj.turboApp.methods.update.value)
-        sendRegisterForm(viewerObj)
-    elif not person:
-        viewerObj.queueTurboAction("Name not valid", "authWarning", viewerObj.turboApp.methods.update.value)
-        sendRegisterForm(viewerObj)
-    elif password == "" or len(password)<8:
-        viewerObj.queueTurboAction("Passwords Not Valid", "authWarning", viewerObj.turboApp.methods.update.value)
-        sendRegisterForm(viewerObj)
-    elif password!=confirm_password:
-        viewerObj.queueTurboAction("Passwords Dont match", "authWarning", viewerObj.turboApp.methods.update.value)
-        sendRegisterForm(viewerObj)
-    else:
-        while True:
-            parentID = stringGen.AlphaNumeric(50, 50)
-            if not SQLConn.execute(f"SELECT UserName from parent_auth where parentID=\"{parentID}\" limit 1"):
-                SQLConn.execute(f"INSERT INTO parents values (\"{parentID}\", \"{person}\", now(), \"\")")
-                SQLConn.execute(f"INSERT INTO parent_auth values (\"{parentID}\", \"{username}\", \"{generate_password_hash(password)}\")")
-                liveCacheManager.parentLoginCall(viewerObj, parentID)
-                renderHomePage(viewerObj)
-                break
-
-def loginOldParent(viewerObj:BaseViewer, form:dict):
-    username = form.get("username", "")
-    password = form.get("password", "")
-    received = SQLConn.execute(f"SELECT ParentID, PWHash from parent_auth where UserName=\"{username}\" limit 1")
-    if not received:
-        viewerObj.queueTurboAction("Username Dont Match", "authWarning", viewerObj.turboApp.methods.update.value)
-        sendLoginForm(viewerObj)
-    else:
-        received = received[0]
-        if not check_password_hash(received["PWHash"].decode(), password):
-            viewerObj.queueTurboAction("Password Dont Match", "authWarning", viewerObj.turboApp.methods.update.value)
-            sendLoginForm(viewerObj)
-        else:
-            liveCacheManager.parentLoginCall(viewerObj, received["ParentID"].decode())
-            renderHomePage(viewerObj)
-
 
 def createNewChild(viewerObj: BaseViewer, form:dict):
     parentID = getKnownLoggedInParentID(viewerObj)
@@ -367,14 +321,104 @@ def addNewQuestion(viewerObj:BaseViewer, form:dict):
             return viewerObj.queueTurboAction("Question Added", "newQuestionError", viewerObj.turboApp.methods.update)
 
 
+
+
+##############################################################################################################################
+##############################################################################################################################
+
+
+
+def acceptBoardAnswer(BoardID:str|None):
+    sentAt = request.args.get("T")
+    option = int(request.args.get("OPTION")) if request.args.get("OPTION", "").isdigit() else None
+    received = SQLConn.execute(f"SELECT Options, CorrectOption, OptionSelected from questionhistory where SentAt=\"{sentAt}\" and BoardID=\"{BoardID}\"")
+    if received:
+        received = received[0]
+        options = loads(received["Options"])
+        correctOption = received["CorrectOption"]
+        optionsSelected = received["OptionSelected"]
+        if optionsSelected == 0:
+            SQLConn.execute(f"UPDATE questionhistory SET OptionSelected={option} WHERE BoardID=\"{BoardID}\" and SentAt=\"{sentAt}\"")
+        isCorrect = option == correctOption
+        received = SQLConn.execute(f"SELECT ChildID, Points, CandiesReceived, from children where BoardID=\"{BoardID}\"")
+        points = 0
+        dropCandy = False
+        if received:
+            received = received[0]
+            childID = received["ChildID"].decode()
+            points = received["Points"]
+            candiesReceived = received["CandiesReceived"]
+            if isCorrect:
+                points += 10
+                if points >= 30:
+                    points = 0
+                    dropCandy = True
+                    candiesReceived += 1
+                SQLConn.execute(f"UPDATE children set Points={points}, CandiesReceived={candiesReceived} where ChildID=\"{childID}\"")
+        response = {"PURPOSE": "SCORE", "V": True, "C": isCorrect, "O": options[correctOption - 1], "S": str(points), "D": dropCandy}
+        print(response)
+        return response
+    else:
+        return {"PURPOSE": "SCORE", "V": False}
+
+
+def sendBoardNewQuestion(BoardID:None|str):
+    subject = request.args.get("subject", "")
+    optionCount = int(request.args.get("optionCount")) if request.args.get("optionCount", "").isdigit() else 3
+    if not subject:
+        received = SQLConn.execute("SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank limit 1")
+    else:
+        received = SQLConn.execute(f"SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank where Subject=\"{subject}\" limit 1")
+    if received:
+        received = received[0]
+        questionID = received["QuestionID"].decode()
+        questionText = received["Question"]
+        answerText = received["CorrectAnswer"]
+        incorrectOptions = loads(received["WrongAnswers"])
+        shuffle(incorrectOptions)
+        optionsToProvide = []
+        for _ in range(min(optionCount - 1, len(incorrectOptions))): optionsToProvide.append(incorrectOptions.pop())
+        optionsToProvide.append(answerText)
+        shuffle(optionsToProvide)
+        correctOption = optionsToProvide.index(answerText) + 1
+        received = SQLConn.execute(f"SELECT ChildID from boards where BoardID=\"{BoardID}\"")
+        if received:
+            received = received[0]
+            childID = received["ChildID"].decode()
+        else:
+            childID = ""
+        sentAt = str(time())
+        SQLConn.execute(f"INSERT INTO questionhistory values (\"{BoardID}\", \"{childID}\", \"{questionID}\", \"{sentAt}\", '{dumps(optionsToProvide)}', {correctOption}, 0)")
+        response = {"PURPOSE": "QUESTION", "T": sentAt, "Q": questionText, "O": optionsToProvide}
+        print(response)
+        return response
+
+
+def acceptBoardOTP(BoardID:None|str):
+    OTP = request.args.get("OTP", "")
+    status = initiateOwnershipBoard(BoardID, OTP)
+    if status == -1:
+        return {"PURPOSE": "OTP", "STATUS": "INVALID OTP"}
+    elif status == 0:
+        return {"PURPOSE": "OTP", "STATUS": "WAITING FOR PARENT"}
+    elif status == 1:
+        return {"PURPOSE": "OTP", "STATUS": "CONNECTED TO PARENT"}
+
+
+
+
+
+
+
+
 def webViewerJoined(viewerObj: BaseViewer):
     print(f"Viewer Joined: {viewerObj.viewerID}")
     parentID = getKnownLoggedInParentID(viewerObj)
     if parentID:
         liveCacheManager.parentLoginCall(viewerObj, parentID)
-        renderHomePage(viewerObj)
+        Thread(target=renderHomePage, args=(viewerObj,)).start()
     else:
-        renderAuthPage(viewerObj)
+        Thread(target=renderAuthPage, args=(viewerObj,)).start()
 
 
 def webFormSubmit(viewerObj: BaseViewer, form: dict):
@@ -385,6 +429,9 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
         loginOldParent(viewerObj, form)
     elif purpose == "REGISTER":
         registerNewParent(viewerObj, form)
+    elif purpose == "LOGOUT":
+        liveCacheManager.parentLogoutCall(viewerObj, True)
+        Thread(target=renderAuthPage, args=(viewerObj,)).start()
     elif purpose == "NEW_BOARD":
         sendNewBoardForm(viewerObj)
         if initiateOwnershipParent(viewerObj, form) != -1:
@@ -393,27 +440,20 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
     elif purpose == "NEW_CHILD":
         sendNewChildForm(viewerObj)
         createNewChild(viewerObj, form)
-        sendIdleChildren(viewerObj)
         sendAssignmentForm(viewerObj)
     elif "REMOVE_BOARD" in purpose:
         deleteOwnedBoard(viewerObj, purpose.replace("REMOVE_BOARD_", ""))
-        sendIdleBoards(viewerObj)
         sendAssignmentForm(viewerObj)
     elif "REMOVE_CHILD" in purpose:
         deleteOldChild(viewerObj, purpose.replace("REMOVE_CHILD_", ""))
-        sendIdleChildren(viewerObj)
         sendAssignmentForm(viewerObj)
     elif purpose == "NEW_ASSIGNMENT":
         initiateAssignment(viewerObj, form)
         sendAssignmentForm(viewerObj)
         sendAssigned(viewerObj)
-        sendIdleBoards(viewerObj)
-        sendIdleChildren(viewerObj)
     elif "REMOVE_ASSIGNMENT" in purpose:
         deleteAssignment(viewerObj, purpose.replace("REMOVE_ASSIGNMENT_", "").split("_")[0], purpose.replace("REMOVE_ASSIGNMENT_", "").split("_")[1])
         sendAssigned(viewerObj)
-        sendIdleBoards(viewerObj)
-        sendIdleChildren(viewerObj)
     elif purpose == "ADD_QUESTION":
         sendNewQuestionForm(viewerObj)
         addNewQuestion(viewerObj, form)
@@ -424,9 +464,139 @@ def webViewerLeft(viewerObj: BaseViewer):
     liveCacheManager.parentLogoutCall(viewerObj)
 
 
-def sendAssigned(viewerObj:BaseViewer):
-    viewerObj.queueTurboAction("<div id='childBoard_create'></div>", "childBoardAssignments", viewerObj.turboApp.methods.update, forceFlush=True)
+
+def registerNewParent(viewerObj:BaseViewer, form:dict):
+    username = form.get("username", "")
+    person = form.get("person", "")
+    password = form.get("password", "")
+    confirm_password = form.get("confirm", "")
+    if not username:
+        viewerObj.queueTurboAction("Invalid Username", "authWarning", viewerObj.turboApp.methods.update.value)
+        sendRegisterForm(viewerObj)
+    elif SQLConn.execute(f"SELECT UserName from parent_auth where UserName=\"{username}\" limit 1"):
+        viewerObj.queueTurboAction("Username Taken", "authWarning", viewerObj.turboApp.methods.update.value)
+        sendRegisterForm(viewerObj)
+    elif not person:
+        viewerObj.queueTurboAction("Name not valid", "authWarning", viewerObj.turboApp.methods.update.value)
+        sendRegisterForm(viewerObj)
+    elif password == "" or len(password)<8:
+        viewerObj.queueTurboAction("Passwords Not Valid", "authWarning", viewerObj.turboApp.methods.update.value)
+        sendRegisterForm(viewerObj)
+    elif password!=confirm_password:
+        viewerObj.queueTurboAction("Passwords Dont match", "authWarning", viewerObj.turboApp.methods.update.value)
+        sendRegisterForm(viewerObj)
+    else:
+        while True:
+            parentID = stringGen.AlphaNumeric(50, 50)
+            if not SQLConn.execute(f"SELECT UserName from parent_auth where parentID=\"{parentID}\" limit 1"):
+                SQLConn.execute(f"INSERT INTO parents values (\"{parentID}\", \"{person}\", now(), \"\")")
+                SQLConn.execute(f"INSERT INTO parent_auth values (\"{parentID}\", \"{username}\", \"{generate_password_hash(password)}\")")
+                liveCacheManager.parentLoginCall(viewerObj, parentID)
+                Thread(target=renderHomePage, args=(viewerObj,)).start()
+                break
+
+def loginOldParent(viewerObj:BaseViewer, form:dict):
+    username = form.get("username", "")
+    password = form.get("password", "")
+    received = SQLConn.execute(f"SELECT ParentID, PWHash from parent_auth where UserName=\"{username}\" limit 1")
+    if not received:
+        viewerObj.queueTurboAction("Username Dont Match", "authWarning", viewerObj.turboApp.methods.update.value)
+        Thread(target=sendLoginForm, args=(viewerObj,)).start()
+    else:
+        received = received[0]
+        if not check_password_hash(received["PWHash"].decode(), password):
+            viewerObj.queueTurboAction("Password Dont Match", "authWarning", viewerObj.turboApp.methods.update.value)
+            Thread(target=sendLoginForm, args=(viewerObj,)).start()
+        else:
+            liveCacheManager.parentLoginCall(viewerObj, received["ParentID"].decode())
+            Thread(target=renderHomePage, args=(viewerObj,)).start()
+
+
+
+
+def renderHomePage(viewerObj:BaseViewer):
+    homepageHTML = \
+f"""
+<h1><br>Welcome to SmartCandyDispenser</h1>
+<div id="parentInfo"></div>
+<h2><br>Assigned Boards</h2>
+<div id="assigned"></div>
+<h2><br>Assign Board to a Child</h2>
+<div id="newAssignment"></div>
+<br>Add new Child:
+<div id="newChild"></div>
+<br>Add new Board:
+<div id="newBoard"></div>
+<br>Pending Boards Verification:
+<div id="pendingBoardVerification"></div>
+<h2>Idle Children</h2>
+<div id="idleChildren"></div>
+<h2>Idle Boards</h2>
+<div id="idleBoards"></div>
+<br>Add new Question:
+<div id="newQuestion"></div>
+<div id="newQuestionError"></div>
+<div id="script_create"></div>
+"""
+    viewerObj.queueTurboAction(homepageHTML, "mainDiv", viewerObj.turboApp.methods.update)
+    Thread(target=sendParentInfo, args=(viewerObj,)).start()
+    Thread(target=sendAssigned, args=(viewerObj,)).start()
+    Thread(target=sendAssignmentForm, args=(viewerObj,)).start()
+    Thread(target=sendNewChildForm, args=(viewerObj,)).start()
+    Thread(target=sendNewBoardForm, args=(viewerObj,)).start()
+    Thread(target=sendPendingBoardVerifications, args=(viewerObj,)).start()
+    Thread(target=sendIdleChildren, args=(viewerObj,)).start()
+    Thread(target=sendIdleBoards, args=(viewerObj,)).start()
+    Thread(target=sendNewQuestionForm, args=(viewerObj,)).start()
+
+
+
+def renderAuthPage(viewerObj:BaseViewer):
+    authPage = \
+f"""
+<div id="loginForm"></div>
+<div id="registerForm"></div>
+<div id="authWarning"></div>
+"""
+    viewerObj.queueTurboAction(authPage, "mainDiv", viewerObj.turboApp.methods.update)
+    Thread(target=sendRegisterForm, args=(viewerObj,)).start()
+    Thread(target=sendLoginForm, args=(viewerObj,)).start()
+
+
+def sendParentInfo(viewerObj:BaseViewer):
     parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentOTP = generateParentOTP(parentID)
+    received = SQLConn.execute(f"SELECT ParentName from parents where ParentID=\"{parentID}\"")
+    if received: parentName = received[0]["ParentName"]
+    else: parentName = "Nameless Parent"
+    parentInfoHTML = \
+f"""
+<form onsubmit="return submit_ws(this)">
+{viewerObj.addCSRF("LOGOUT")}
+<button type="submit" class="logout-button">Logout</button>
+</form>
+<p>Welcome {parentName}<br>Your OTP is: {parentOTP}</p>
+"""
+    viewerObj.queueTurboAction(parentInfoHTML, "parentInfo", viewerObj.turboApp.methods.update)
+
+
+def sendAssigned(viewerObj:BaseViewer):
+    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+
+    assignedTableHTML = \
+"""
+<table>
+    <thead>
+        <tr>
+            <th>Board Name</th>
+            <th>Child Name</th>
+            <th>Score</th>
+            <th>Child Stats</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+<tbody>
+"""
     for board in SQLConn.execute(f"SELECT ChildID, BoardID, Name from boards where parentID=\"{parentID}\""):
         childID = board['ChildID'].decode()
         boardID = board['BoardID'].decode()
@@ -438,42 +608,45 @@ def sendAssigned(viewerObj:BaseViewer):
                 child = child[0]
                 childName = child['Name']
                 childPoints = child['Points']
-        if childID:
-            assignedHTML = f"""
-            <form onsubmit="return submit_ws(this)">
-            {viewerObj.addCSRF(f"REMOVE_ASSIGNMENT_{boardID}_{childID}")}
-            {board['Name']}: {childName}:{childPoints}
-            <input type="submit" Value="Separate">
-            </form>
-            """
-            viewerObj.queueTurboAction(assignedHTML, "childBoard", viewerObj.turboApp.methods.newDiv)
+        assignedTableHTML += \
+f"""
+    <tr>
+        <td>{board['Name']}</td>
+        <td>{childName}</td>
+        <td><div id="{childID}_points">{childPoints}</td>
+        <td><form onsubmit="return submit_ws(this)"><button type="submit">VIEW STATS</button>{viewerObj.addCSRF(f"STATS_{childID}")}</form></td>
+        <td><form onsubmit="return submit_ws(this)"><button type="submit">SEPARATE</button>{viewerObj.addCSRF(f"REMOVE_ASSIGNMENT_{boardID}_{childID}")}</form></td>
+      </form>
+    </tr>
+"""
+    assignedTableHTML += "</tbody></table>"
+    viewerObj.queueTurboAction(assignedTableHTML, "assigned", viewerObj.turboApp.methods.update)
 
 
 def sendAssignmentForm(viewerObj:BaseViewer):
     parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
     idleBoards = []
-    for board in SQLConn.execute(f'SELECT BoardID, Name from boards where ParentID=\"{parentID}\" and ChildID=\"\"'):
-        idleBoards.append([board["BoardID"].decode(), board["Name"]])
     idleChildren = []
-    for child in SQLConn.execute(f'SELECT ChildID, Name from children where ParentID=\"{parentID}\" and BoardID=\"\"'):
-        idleChildren.append([child["ChildID"].decode(), child["Name"]])
-    newAssignmentHTML = f"""<form onsubmit="return submit_ws(this)">
+    for board in SQLConn.execute(f'SELECT BoardID, Name from boards where ParentID=\"{parentID}\" and ChildID=\"\"'): idleBoards.append([board["BoardID"].decode(), board["Name"]])
+    for child in SQLConn.execute(f'SELECT ChildID, Name from children where ParentID=\"{parentID}\" and BoardID=\"\"'): idleChildren.append([child["ChildID"].decode(), child["Name"]])
+    newAssignmentHTML = \
+f"""
+<form onsubmit="return submit_ws(this)">
     {viewerObj.addCSRF("NEW_ASSIGNMENT")}
-<label for="board">Choose a board:</label>
-<select name="board">
+    <label for="board">Choose a board:</label>
+    <select name="board">
 """
-    for board in idleBoards:
-        newAssignmentHTML+= f"<option value=\"{board[0]}\">{board[1]}</option>"
+    for board in idleBoards: newAssignmentHTML+= f"<option value=\"{board[0]}\">{board[1]}</option>"
     newAssignmentHTML += "</select>"
 
-    newAssignmentHTML += f"""
+    newAssignmentHTML += \
+f"""
     <label for="board">Choose a child:</label>
     <select name="child">
-    """
-    for child in idleChildren:
-        newAssignmentHTML += f"<option value=\"{child[0]}\">{child[1]}</option>"
+"""
+    for child in idleChildren: newAssignmentHTML += f"<option value=\"{child[0]}\">{child[1]}</option>"
     newAssignmentHTML += "</select> <input type='submit' Value='Assign'> </form>"
-    viewerObj.queueTurboAction(newAssignmentHTML, "newChildBoardAssignments", viewerObj.turboApp.methods.update)
+    viewerObj.queueTurboAction(newAssignmentHTML, "newAssignment", viewerObj.turboApp.methods.update)
 
 
 def sendPendingBoardVerifications(viewerObj:BaseViewer):
@@ -538,71 +711,18 @@ f"""
     viewerObj.queueTurboAction(newChildHTML, "newChild", viewerObj.turboApp.methods.update)
 
 
-def renderHomePage(viewerObj:BaseViewer):
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
-    parentOTP = generateParentOTP(parentID)
-    received = SQLConn.execute(f"SELECT ParentName from parents where ParentID=\"{parentID}\"")
-    if received: parentName = received[0]["ParentName"]
-    else:
-        parentName = "Nameless Parent"
-
-    homepageHTML = \
-f"""
-Welcome {parentName}<br>
-Your OTP is: {parentOTP}<br>
-<br><br>Assigned Boards:
-<div id="childBoardAssignments"></div>
-<br><br>Assign board to a child:
-<div id="newChildBoardAssignments"></div>
-<br>Add new Child:
-<div id="newChild"></div>
-<br>Add new Board:
-<div id="newBoard"></div>
-<br>Pending Boards Verification:
-<div id="pendingBoardVerification"></div>
-<br>Children Idle:
-<div id="idleChildren"></div>
-<br>Boards Idle:
-<div id="idleBoards"></div>
-<br>Add new Question:
-<div id="newQuestion"></div>
-<div id="newQuestionError"></div>
-"""
-    viewerObj.queueTurboAction(homepageHTML, "mainDiv", viewerObj.turboApp.methods.update)
-    sendAssigned(viewerObj)
-    sendAssignmentForm(viewerObj)
-    sendNewBoardForm(viewerObj)
-    sendNewChildForm(viewerObj)
-    sendPendingBoardVerifications(viewerObj)
-    sendIdleChildren(viewerObj)
-    sendIdleBoards(viewerObj)
-    sendNewQuestionForm(viewerObj)
-
-
-def renderAuthPage(viewerObj:BaseViewer):
-    authPage = \
-f"""
-<div id="loginForm"></div>
-<div id="registerForm"></div>
-<div id="authWarning"></div>
-"""
-    viewerObj.queueTurboAction(authPage, "mainDiv", viewerObj.turboApp.methods.update)
-    sendRegisterForm(viewerObj)
-    sendLoginForm(viewerObj)
-
 
 def sendNewQuestionForm(viewerObj:BaseViewer):
     questionHTML = \
         f"""
     <form onsubmit="return submit_ws(this)">
     {viewerObj.addCSRF("ADD_QUESTION")}
-    <label for="subject">Choose a Subject:</label>
     <select name="subject">
         <option value="Maths">Maths</option>
         <option value="English">English</option>
         <option value="Science">Science</option>
         <option value="GK">GK</option>
-    </select>
+    </select><br>
     <input type="text" name="question" placeholder="Type Question here" required><br>
     <input type="text" name="correct" placeholder="Correct Answer here" required><br>
     <input type="text" name="incorrect1" placeholder="Incorrect Option" required><br>
@@ -613,7 +733,7 @@ def sendNewQuestionForm(viewerObj:BaseViewer):
     <button type="submit">Upload</button>
     </form>
     """
-    viewerObj.queueTurboAction(questionHTML, "loginForm", viewerObj.turboApp.methods.update)
+    viewerObj.queueTurboAction(questionHTML, "newQuestion", viewerObj.turboApp.methods.update)
 
 
 def sendLoginForm(viewerObj:BaseViewer):
@@ -646,11 +766,10 @@ f"""
 
 
 
-logger = LogManager()
-SQLConn = connectDB(logger)
-liveCacheManager = UserClass()
-stringGen = STR_GEN()
 
+
+##############################################################################################################################
+##############################################################################################################################
 
 
 
@@ -659,15 +778,136 @@ title = CoreValues.title.value
 webBase = Routes.webHomePage.value
 webWS = Routes.webWS.value
 fernetKey = ServerSecrets.webFernetKey.value
-extraHeads = ""
-baseBody = """
-<body> 
-<div id="mainDiv">Generating OTP and validating other fields<div>
-</body>"""
+extraHeads = """<style>
+    /* Global Styles */
+    #root {
+      font-family: Arial, sans-serif;
+      background: linear-gradient(to right, #e0eafc, #cfdef3);
+      color: #333;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+    #mainDiv {
+      max-width: 800px;
+      width: 100%;
+      background-color: #ffffff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      position: relative;
+    }
 
 
+     /* Logout Button */
+     .logout-button {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background-color: #f44336;
+      color: #ffffff;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .logout-button:hover {
+      background-color: #d32f2f;
+    }
+
+    h1, h2 {
+      text-align: center;
+      color: #0076ff;
+    }
+
+    /* Form Styles */
+    form {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: inline-block;
+      margin: 8px 0 4px;
+      color: #555;
+    }
+
+    input[type="text"], select {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+
+    button, input[type="submit"] {
+      background-color: #0076ff;
+      color: #fff;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover, input[type="submit"]:hover {
+      background-color: #005bb5;
+    }
+
+    /* Table Styles */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    th, td {
+      padding: 10px;
+      border: 1px solid #ddd;
+      text-align: left;
+    }
+
+    th {
+      background-color: #0076ff;
+      color: #ffffff;
+    }
+
+    /* Section Styles */
+    #mainDiv > div, #mainDiv > p {
+      margin-bottom: 20px;
+      padding: 15px;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      background-color: #fafafa;
+    }
+
+    #mainDiv > div > form {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    /* Additional Styling */
+    #pendingBoardVerification, #idleChildren, #idleBoards {
+      font-size: 14px;
+      color: #777;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+  </style>"""
+baseBody = """<body><div id="root"><div id="mainDiv">Generating OTP and validating other fields</div></div></body>"""
+
+
+logger = LogManager()
+SQLConn = connectDB(logger)
+liveCacheManager = UserClass()
+stringGen = STR_GEN()
 baseApp, turboApp = createApps(webFormSubmit, webViewerJoined, webViewerLeft, appName, webBase, fernetKey, extraHeads, baseBody, title)
-
 
 
 @baseApp.get(Routes.apiForceCheckParentConnection.value)
@@ -677,7 +917,6 @@ def apiForceCheckParentConnection(BoardID:str|None):
     return {"PURPOSE":"PARENT", "STATUS":True}
 
 
-
 @baseApp.get(Routes.apiCheckParentAccepted.value)
 @getSenderBoard(parentRequired=True)
 def apiCheckParentAccepted(BoardID:str|None):
@@ -685,87 +924,22 @@ def apiCheckParentAccepted(BoardID:str|None):
     return {"PURPOSE": "ACCEPT", "STATUS": True}
 
 
-
 @baseApp.get(Routes.apiSubmitOTP.value)
 @getSenderBoard(parentRequired=False)
 def apiSubmitOTP(BoardID:str|None):
-    OTP = request.args.get("OTP", "")
-    status = initiateOwnershipBoard(BoardID, OTP)
-    if status == -1:
-        return {"PURPOSE":"OTP", "STATUS":"INVALID OTP"}
-    elif status == 0:
-        return {"PURPOSE":"OTP", "STATUS":"WAITING FOR PARENT"}
-    elif status == 1:
-        return {"PURPOSE":"OTP", "STATUS":"CONNECTED TO PARENT"}
-
+    return acceptBoardOTP(BoardID)
 
 
 @baseApp.get(Routes.apiNewQuestion.value)
 @getSenderBoard(parentRequired=True)
 def apiNewQuestion(BoardID:str|None):
-    subject = request.args.get("subject", "")
-    optionCount = int(request.args.get("optionCount")) if request.args.get("optionCount", "").isdigit() else 3
-    if not subject:
-        received = SQLConn.execute("SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank limit 1")
-    else:
-        received = SQLConn.execute(f"SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank where Subject=\"{subject}\" limit 1")
-    if received:
-        received = received[0]
-        questionID = received["QuestionID"].decode()
-        questionText = received["Question"]
-        answerText = received["CorrectAnswer"]
-        incorrectOptions = loads(received["WrongAnswers"])
-        shuffle(incorrectOptions)
-        optionsToProvide = []
-        for _ in range(min(optionCount - 1, len(incorrectOptions))): optionsToProvide.append(incorrectOptions.pop())
-        optionsToProvide.append(answerText)
-        shuffle(optionsToProvide)
-        correctOption = optionsToProvide.index(answerText)+1
-        received = SQLConn.execute(f"SELECT ChildID from boards where BoardID=\"{BoardID}\"")
-        if received:
-            received = received[0]
-            childID = received["ChildID"].decode()
-        else: childID = ""
-        sentAt = str(time())
-        SQLConn.execute(f"INSERT INTO questionhistory values (\"{BoardID}\", \"{childID}\", \"{questionID}\", \"{sentAt}\", '{dumps(optionsToProvide)}', {correctOption}, 0)")
-        response = {"PURPOSE":"QUESTION", "T": sentAt, "Q":questionText, "O":optionsToProvide}
-        print(response)
-        return response
+    return sendBoardNewQuestion(BoardID)
 
 
 @baseApp.get(Routes.apiSubmitAnswer.value)
 @getSenderBoard(parentRequired=True)
 def apiSubmitAnswer(BoardID:str|None):
-    sentAt = request.args.get("T")
-    option =  int(request.args.get("OPTION")) if request.args.get("OPTION", "").isdigit() else None
-    received = SQLConn.execute(f"SELECT Options, CorrectOption, OptionSelected from questionhistory where SentAt=\"{sentAt}\" and BoardID=\"{BoardID}\"")
-    if received:
-        received = received[0]
-        options = loads(received["Options"])
-        correctOption = received["CorrectOption"]
-        optionsSelected = received["OptionSelected"]
-        if optionsSelected == 0:
-            SQLConn.execute(f"UPDATE questionhistory SET OptionSelected={option} WHERE BoardID=\"{BoardID}\" and SentAt=\"{sentAt}\"")
-        isCorrect = option == correctOption
-        received = SQLConn.execute(f"SELECT ChildID, Points, CandiesReceived, from children where BoardID=\"{BoardID}\"")
-        points = 0
-        dropCandy = False
-        if received:
-            received = received[0]
-            childID = received["ChildID"].decode()
-            points = received["Points"]
-            candiesReceived = received["CandiesReceived"]
-            if isCorrect:
-                points += 10
-                if points >= 30:
-                    points = 0
-                    dropCandy = True
-                    candiesReceived += 1
-                SQLConn.execute(f"UPDATE children set Points={points}, CandiesReceived={candiesReceived} where ChildID=\"{childID}\"")
-        response = {"PURPOSE":"SCORE", "V": True, "C":isCorrect, "O":options[correctOption-1], "S":str(points), "D":dropCandy}
-        print(response)
-        return response
-    else: return {"PURPOSE":"SCORE", "V": False}
+    return acceptBoardAnswer(BoardID)
 
 
 print(f"http://127.0.0.1:{ServerSecrets.webPort.value}{Routes.webHomePage.value}")
