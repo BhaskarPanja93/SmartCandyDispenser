@@ -340,7 +340,7 @@ def acceptBoardAnswer(BoardID:str|None):
         if optionsSelected == 0:
             SQLConn.execute(f"UPDATE questionhistory SET OptionSelected={option} WHERE BoardID=\"{BoardID}\" and SentAt=\"{sentAt}\"")
         isCorrect = option == correctOption
-        received = SQLConn.execute(f"SELECT ChildID, Points, CandiesReceived, from children where BoardID=\"{BoardID}\"")
+        received = SQLConn.execute(f"SELECT ChildID, Points, CandiesReceived from children where BoardID=\"{BoardID}\"")
         points = 0
         dropCandy = False
         if received:
@@ -600,15 +600,13 @@ def sendAssigned(viewerObj:BaseViewer):
     for board in SQLConn.execute(f"SELECT ChildID, BoardID, Name from boards where parentID=\"{parentID}\""):
         childID = board['ChildID'].decode()
         boardID = board['BoardID'].decode()
-        childName = ""
-        childPoints = ""
         if childID:
             child = SQLConn.execute(f"SELECT Name, Points from children where ChildID=\"{childID}\" and ParentID=\"{parentID}\"")
             if child:
                 child = child[0]
                 childName = child['Name']
                 childPoints = child['Points']
-        assignedTableHTML += \
+                assignedTableHTML += \
 f"""
     <tr>
         <td>{board['Name']}</td>

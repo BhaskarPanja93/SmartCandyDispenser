@@ -203,9 +203,13 @@ void ensureWiFi()
         printLCD("Connecting to WiFi", false);
         while(WiFi.status() != WL_CONNECTED)
         {
-            // Print a dot every 500ms till WiFi connects
-            delay(500);
+            delay(200);
             printLCD(".", false);
+            delay(200);
+            printLCD("..", false);
+            delay(200);
+            printLCD("..", false);
+            cursorLCD(1, 0);
         }
         clearLCD();
         printLCD("WiFi Connected", false);
