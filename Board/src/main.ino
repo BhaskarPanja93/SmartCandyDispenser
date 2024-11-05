@@ -36,6 +36,11 @@ void refillCandy(bool instant)
             servoObj.write(servoCurrentPos);
             delay(25);
         }
+        for (int i=0;i<50; i++)
+        {
+            servoObj.write(ServoRefillPos);
+            delay(20);
+        }
 	}
 }
 void dropCandy(bool instant)
@@ -49,6 +54,11 @@ void dropCandy(bool instant)
         {
             servoObj.write(servoCurrentPos);
             delay(25);
+        }
+        for (int i=0;i<50; i++)
+        {
+            servoObj.write(ServoDropPos);
+            delay(20);
         }
 	}
 }
@@ -466,11 +476,6 @@ void parseAnswerResponse(JsonDocument response)
             printLCD("Enjoy your treat :)", true);
             dropCandy(false); // Slowly drop candy (moving part always stays in filled position when idle)
             delay(1000); // Wait 500ms for candy to drop
-            for (int i=0;i<100; i++)
-            {
-                dropCandy(true);
-                delay(20);
-            }
             refillCandy(false); // Slowly send back  part to refill position
         }
         else 
@@ -505,6 +510,7 @@ void setup()
     readBearer();
     LCD.init(); // Activate LCD
     LCD.backlight();// Turn on LCD backlight
+    LCD.noCursor(); // Turn off Cursor
     servoObj.attach(ServoChannel); // Connect Servo on proper pin
     refillCandy(false); // Start with servo at refill position
     pinMode(I1, INPUT_PULLUP);
