@@ -1,13 +1,9 @@
-#define TEST true; // Define TEST to signify code used for test board
-
-
 #include <EEPROM.h>
 #include <LiquidCrystal_I2C.h>
 #include <ArduinoJson.h>
 #define ARDUINOJSON_ENABLE_STD_STRING 1
 
 
-#ifdef TEST // If TEST
 #include <ESP32Servo.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -18,19 +14,6 @@ const int I2 = 5;
 const int I3 = 0;
 const int BuzzerChannel = 27;
 const int ServoChannel = 12;
-#else // If NOT Test
-#include <Servo.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-const String ssid = "RIYALAPPY";
-const String password = "riya@1410";
-const int I1 = 14;
-const int I2 = 12;
-const int I3 = 13;
-const int BuzzerChannel = D8;
-const int ServoChannel = 0;
-#endif
-
 
 
 
