@@ -4,16 +4,18 @@
 #define ARDUINOJSON_ENABLE_STD_STRING 1
 
 
-#include <ESP32Servo.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
-const String ssid = "Wokwi-GUEST";
-const String password = "";
-const int I1 = 32;
-const int I2 = 5;
-const int I3 = 0;
-const int BuzzerChannel = 27;
-const int ServoChannel = 12;
+
+#include <Servo.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+const String ssid = "RIYALAPPY";
+const String password = "riya@1410";
+const int I1 = 14;
+const int I2 = 12;
+const int I3 = 13;
+const int BuzzerChannel = D8;
+const int ServoChannel = 0;
+
 
 
 
