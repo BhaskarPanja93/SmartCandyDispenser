@@ -36,8 +36,8 @@ const int ServoChannel = 0;
 
 // Servo Motor related variables and functions
 Servo servoObj;
-const int ServoRefillPos = 62; // Degrees to write to fill new candy
-const int ServoDropPos = 6; // Degrees to write to drop the filled candy
+const int ServoRefillPos = 63; // Degrees to write to fill new candy
+const int ServoDropPos = 2; // Degrees to write to drop the filled candy
 int servoCurrentPos = ServoRefillPos-5; // Initialise the board with a 5 degree difference value (jerk start) to allow clearing blockages
 void refillCandy(bool instant)
 {
@@ -203,11 +203,14 @@ void ensureWiFi()
         printLCD("Connecting to WiFi", false);
         while(WiFi.status() != WL_CONNECTED)
         {
-            delay(200);
+            cursorLCD(1, 0);
+            delay(300);
             printLCD(".", false);
-            delay(200);
+            cursorLCD(1, 0);
+            delay(300);
             printLCD("..", false);
-            delay(200);
+            cursorLCD(1, 0);
+            delay(300);
             printLCD("..", false);
             cursorLCD(1, 0);
         }
@@ -478,8 +481,8 @@ void parseAnswerResponse(JsonDocument response)
             // Drop a candy
             printLCD("Enjoy your treat :)", true);
             dropCandy(false); // Slowly drop candy (moving part always stays in filled position when idle)
-            delay(500); // Wait 500ms for candy to drop
-            refillCandy(false); // Slowly send backmoving part to refill position
+            delay(1000); // Wait 500ms for candy to drop
+            refillCandy(false); // Slowly send back  part to refill position
         }
         else 
         {
