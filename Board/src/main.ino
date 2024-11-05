@@ -461,14 +461,18 @@ void parseAnswerResponse(JsonDocument response)
             // Option input was right
             clearLCD();
             printLCD("Correct", false);
+            delay(1000);
         }
         else
         {
             // Option input was wrong
             String correctAnswer = response["O"];
             clearLCD();
+            tone(BuzzerChannel, 6000, 1000);
             printLCD("Wrong", false);
             printLCD("Answer is: "+correctAnswer, true);
+            delay(2000);
+            noTone(BuzzerChannel);
         }
         if (response["D"]==true) 
         {
