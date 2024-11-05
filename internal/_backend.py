@@ -921,6 +921,7 @@ def showChildStats(childID):
     if cookieObj.isReadSuccessfully() and cookieObj.remoteAddress == cookieObjRequest.remoteAddress and cookieObj.UA == cookieObjRequest.UA:
         parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, cookieObj.viewerID)
         if parentID is not None and SQLConn.execute(f"SELECT ChildID from children where ChildID=\"{childID}\" and ParentID=\"{parentID}\""):
+            childName = SQLConn.execute(f"SELECT Name from children where ChildID=\"{childID}\"")[0]["Name"]
             allQuestionsAsked =  SQLConn.execute(f"SELECT QuestionID, SentAt, Options, CorrectOption, OptionSelected from questionhistory where ChildID=\"{childID}\"")
             subjectWiseQuestionCount = {}
             correctCount = 0
@@ -952,7 +953,12 @@ def showChildStats(childID):
             for question in allQuestionsAsked:
                 allQuestionsHTMLData += f"<div>Date: {question['SentAt']}<br>Subject: {question['Subject']}<br>Question: {question['Question']}<br>Options: {question['Options']}<br>You Selected: {question['Options'][question['OptionSelected']-1]}<br>Correct Option: {question['Options'][question['CorrectOption']-1]}</div>"
             return f"""
-
+<head>
+<title>
+{childName}
+</title>
+</head>
+<body>
 <h1>Subject Chart</h1><div id="subjectChart"></div>
 <h1>Answer Solved Chart</h1><div id="answeredChart"></div>
 <h1>Accuracy Chart</h1><div id="correctnessChart"></div>
@@ -997,6 +1003,7 @@ div {{
         correctnesschart.draw(correctnessData, correctnessOptions);
 }}
 </script>
+</body>
 """
     return "You dont own the child"
 
