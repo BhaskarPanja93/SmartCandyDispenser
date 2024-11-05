@@ -100,17 +100,17 @@ void __printLCD(String nextWord, char c)
         }
     }
     cursorLCD(LCD_R, LCD_C); // Place cursor at the exact position
-    if (nextWord.length()!=0) nextWord += " "; // If word was not empty, add a space at the end of word
+    if (nextWord.length()!=0 && nextWord.length()+LCD_C!=LCD_C_MAX) nextWord += " "; // If word was not empty, add a space at the end of word
     LCD.print(nextWord); // Print the word on the LCD
     LCD_C += nextWord.length(); // Increment cursor position
 }
 void printLCD(String s, bool newLine)
 {
     // Print String based variables on the LCD with automatic line shifting based on words
-    // Makes sure any word isnt split and displayed over 2 lines
+    // Makes sure any word isn't split and displayed over 2 lines
     // Only splits on the basis of different words
     // :param s: The string to display
-    // :param newLine: boolean to signify if current strign should start on a new line
+    // :param newLine: boolean to signify if current string should start on a new line
     if (s[s.length()-1] != '\0' || s[s.length()-1] != ' ' || s[s.length()-1] != '\n') s+=" "; // If string doesnt end with a end character, manually add it
     String nextWord = "";
     if (newLine) __printLCD("", '\n'); // Print an empty line if newLine is positive
@@ -484,7 +484,7 @@ void parseAnswerResponse(JsonDocument response)
             for (int i=0;i<100; i++)
             {
                 dropCandy(true);
-                delay(20)
+                delay(20);
             }
             refillCandy(false); // Slowly send back  part to refill position
         }
@@ -517,6 +517,7 @@ void setup()
     // Board operation starts here
 	Serial.begin(9600); // Activate Serial monitor
 	EEPROM.begin(150); // Activate EEPROM writing for 150 address bits
+    readBearer();
     LCD.init(); // Activate LCD
     LCD.backlight();// Turn on LCD backlight
     servoObj.attach(ServoChannel); // Connect Servo on proper pin

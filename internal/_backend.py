@@ -5,7 +5,7 @@ from threading import Thread
 from typing import Callable, Any
 from json import loads, dumps
 from random import shuffle
-from time import sleep, time
+from time import sleep, time, ctime
 from werkzeug.security import generate_password_hash, check_password_hash
 from gevent.pywsgi import WSGIServer
 from functools import wraps
@@ -457,9 +457,13 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
         initiateAssignment(viewerObj, form)
         sendAssignmentForm(viewerObj)
         sendAssigned(viewerObj)
+        sendIdleBoards(viewerObj)
+        sendIdleChildren(viewerObj)
     elif "REMOVE_ASSIGNMENT" in purpose:
         deleteAssignment(viewerObj, purpose.replace("REMOVE_ASSIGNMENT_", "").split("_")[0], purpose.replace("REMOVE_ASSIGNMENT_", "").split("_")[1])
         sendAssigned(viewerObj)
+        sendIdleBoards(viewerObj)
+        sendIdleChildren(viewerObj)
     elif purpose == "ADD_QUESTION":
         sendNewQuestionForm(viewerObj)
         addNewQuestion(viewerObj, form)
@@ -539,10 +543,6 @@ f"""
 <div id="idleChildren"></div>
 <h2>Idle Boards</h2>
 <div id="idleBoards"></div>
-<br>Add new Question:
-<div id="newQuestion"></div>
-<div id="newQuestionError"></div>
-<div id="script_create"></div>
 """
     viewerObj.queueTurboAction(homepageHTML, "mainDiv", viewerObj.turboApp.methods.update)
     Thread(target=sendParentInfo, args=(viewerObj,)).start()
@@ -553,7 +553,7 @@ f"""
     Thread(target=sendPendingBoardVerifications, args=(viewerObj,)).start()
     Thread(target=sendIdleChildren, args=(viewerObj,)).start()
     Thread(target=sendIdleBoards, args=(viewerObj,)).start()
-    Thread(target=sendNewQuestionForm, args=(viewerObj,)).start()
+    # Thread(target=sendNewQuestionForm, args=(viewerObj,)).start()
 
 
 
@@ -618,7 +618,7 @@ f"""
         <td>{board['Name']}</td>
         <td>{childName}</td>
         <td><div id="{childID}_points">{childPoints}</td>
-        <td><form onsubmit="return submit_ws(this)"><button type="submit">VIEW STATS</button>{viewerObj.addCSRF(f"STATS_{childID}")}</form></td>
+        <td><button onclick=" window.open('{Routes.webChildStats.value}/{childID}','_blank')">VIEW STATS</button></td>
         <td><form onsubmit="return submit_ws(this)"><button type="submit">SEPARATE</button>{viewerObj.addCSRF(f"REMOVE_ASSIGNMENT_{boardID}_{childID}")}</form></td>
       </form>
     </tr>
@@ -667,9 +667,10 @@ def sendIdleChildren(viewerObj:BaseViewer):
         childElement = \
 f"""
 <form onsubmit="return submit_ws(this)">
-{child['Name']}
+<button type="button" onclick="window.open(\'{Routes.webChildStats.value}/{child['ChildID'].decode()}\','_blank')">VIEW STATS</button>
 {viewerObj.addCSRF(f"REMOVE_CHILD_{child['ChildID'].decode()}")}
 <input type="submit" value="Remove"/>
+{child['Name']}
 </form>
 """
         viewerObj.queueTurboAction(childElement, "idleChildrenItem", viewerObj.turboApp.methods.newDiv)
@@ -682,9 +683,9 @@ def sendIdleBoards(viewerObj:BaseViewer):
         boardElement = \
             f"""
         <form onsubmit="return submit_ws(this)">
-        {board['Name']}
         {viewerObj.addCSRF(f"REMOVE_BOARD_{board['BoardID'].decode()}")}
         <input type="submit" value="Remove"/>
+        {board['Name']}
         </form>
         """
         viewerObj.queueTurboAction(boardElement, "idleBoardItem", viewerObj.turboApp.methods.newDiv)
@@ -917,13 +918,86 @@ baseApp, turboApp = createApps(webFormSubmit, webViewerJoined, webViewerLeft, ap
 def showChildStats(childID):
     cookieObjRequest = Cookie().readRequest(Imports.request)
     cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
-    if cookieObj.isReadSuccessfully() and cookieObjRequest.originMatchesHost() and cookieObj.remoteAddress == cookieObjRequest.remoteAddress and cookieObj.UA == cookieObjRequest.UA and cookieObj.hostURL == cookieObjRequest.hostURL:
+    if cookieObj.isReadSuccessfully() and cookieObj.remoteAddress == cookieObjRequest.remoteAddress and cookieObj.UA == cookieObjRequest.UA:
         parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, cookieObj.viewerID)
         if parentID is not None and SQLConn.execute(f"SELECT ChildID from children where ChildID=\"{childID}\" and ParentID=\"{parentID}\""):
-            allQuestions =  SQLConn.execute(f"SELECT QuestionID, SentAt, Options, CorrectOption, OptionSelected from questionhistory where ChildID=\"{childID}\"")
-            for i in range(len(allQuestions)):
-                allQuestions[i]["Question"] = SQLConn.execute(f"SELECT Question from questionbank where QuestionID=\"{allQuestions[i]['QuestionID']}\"")[0]["Question"]
-                allQuestions[i]["Subject"] = SQLConn.execute(f"SELECT Subject from questionbank where QuestionID=\"{allQuestions[i]['QuestionID']}\"")[0]["Subject"]
+            allQuestionsAsked =  SQLConn.execute(f"SELECT QuestionID, SentAt, Options, CorrectOption, OptionSelected from questionhistory where ChildID=\"{childID}\"")
+            subjectWiseQuestionCount = {}
+            correctCount = 0
+            answeredCount = 0
+            totalQuestionCount = len(allQuestionsAsked)
+            for i in range(len(allQuestionsAsked)):
+                allQuestionsAsked[i]['QuestionID'] = allQuestionsAsked[i]['QuestionID'].decode()
+                questionText = SQLConn.execute(f"SELECT Question from questionbank where QuestionID=\"{allQuestionsAsked[i]['QuestionID']}\"")[0]["Question"]
+                subject = SQLConn.execute(f"SELECT Subject from questionbank where QuestionID=\"{allQuestionsAsked[i]['QuestionID']}\"")[0]["Subject"]
+                allOptions = allQuestionsAsked[i]["Options"]
+                optionSelected = allOptions[allQuestionsAsked[i]["OptionSelected"]]
+                correctOption = allOptions[allQuestionsAsked[i]["CorrectOption"]]
+
+                allQuestionsAsked[i]["Question"] = questionText
+                allQuestionsAsked[i]["Subject"] = subject
+                allQuestionsAsked[i]["SentAt"] = ctime(float(allQuestionsAsked[i]["SentAt"]))
+                allQuestionsAsked[i]["Options"] = loads(allQuestionsAsked[i]["Options"])
+
+                if subject not in subjectWiseQuestionCount: subjectWiseQuestionCount[subject] = 0
+                subjectWiseQuestionCount[subject] += 1
+                if optionSelected != 0:
+                    answeredCount += 1
+                    if optionSelected == correctOption: correctCount += 1
+            subjectHTMLData = [['Subject', 'Questions per Subject']]
+            for subject in subjectWiseQuestionCount: subjectHTMLData.append([subject, subjectWiseQuestionCount[subject]])
+            answeredHTMLData = [['Answered Count', 'Questions answered and skipped'], ["Answered", answeredCount], ["Unanswered", totalQuestionCount-answeredCount]]
+            correctnessHTMLData = [['Correctness', 'Questions correct and wrong'], ["Correct", correctCount], ["InCorrect", totalQuestionCount-correctCount]]
+            allQuestionsHTMLData = ""
+            for question in allQuestionsAsked:
+                allQuestionsHTMLData += f"<div>Date: {question['SentAt']}<br>Subject: {question['Subject']}<br>Question: {question['Question']}<br>Options: {question['Options']}<br>You Selected: {question['Options'][question['OptionSelected']-1]}<br>Correct Option: {question['Options'][question['CorrectOption']-1]}</div>"
+            return f"""
+
+<h1>Subject Chart</h1><div id="subjectChart"></div>
+<h1>Answer Solved Chart</h1><div id="answeredChart"></div>
+<h1>Accuracy Chart</h1><div id="correctnessChart"></div>
+<h1>Question List:</h1>
+{allQuestionsHTMLData}
+<style>
+body {{
+      font-family: Arial, sans-serif;
+      background: linear-gradient(to right, #e0eafc, #cfdef3);
+      color: #333;
+      margin: 0;
+      padding: 20px;
+      justify-content: center;
+    }}
+div {{
+      margin-bottom: 20px;
+      padding: 15px;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      background-color: #fafafa;
+    }}
+</style>
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<script type="text/javascript">
+    google.charts.load('current', {{'packages':['corechart']}});
+    google.charts.setOnLoadCallback(drawCharts);
+    
+    function drawCharts() {{
+        var subjectData = google.visualization.arrayToDataTable({subjectHTMLData});
+        var subjectOptions = {{'title':'', 'width':550, 'height':400}};
+        var subjectchart = new google.visualization.PieChart(document.getElementById('subjectChart'));
+        subjectchart.draw(subjectData, subjectOptions);
+        
+        var answeredData = google.visualization.arrayToDataTable({answeredHTMLData});
+        var answeredOptions = {{'title':'', 'width':550, 'height':400}};
+        var answeredchart = new google.visualization.PieChart(document.getElementById('answeredChart'));
+        answeredchart.draw(answeredData, answeredOptions);
+        
+        var correctnessData = google.visualization.arrayToDataTable({correctnessHTMLData});
+        var correctnessOptions = {{'title':'', 'width':550, 'height':400}};
+        var correctnesschart = new google.visualization.PieChart(document.getElementById('correctnessChart'));
+        correctnesschart.draw(correctnessData, correctnessOptions);
+}}
+</script>
+"""
     return "You dont own the child"
 
 @baseApp.get(Routes.apiForceCheckParentConnection.value)
