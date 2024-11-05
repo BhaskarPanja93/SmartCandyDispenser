@@ -211,8 +211,7 @@ void ensureWiFi()
             printLCD("..", false);
             cursorLCD(1, 0);
             delay(300);
-            printLCD("..", false);
-            cursorLCD(1, 0);
+            printLCD("...", false);
         }
         clearLCD();
         printLCD("WiFi Connected", false);
@@ -492,7 +491,7 @@ void parseAnswerResponse(JsonDocument response)
     }
     else
     {
-        // Error occured in server trying to process the option provided
+        // Error occurred in server trying to process the option provided
         clearLCD();
         printLCD("Server didnt know the answer :(", false);
         delay(3000);

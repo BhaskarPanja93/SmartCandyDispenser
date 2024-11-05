@@ -19,8 +19,7 @@ from internal.Methods import *
 
 def getSenderBoard(parentRequired:bool) -> Callable[[Any], Callable[[], dict[str, str | Any] | dict[str, str | bool] | dict[str, str] | Any]]:
     """
-    Decorator to fetch BoardID of the request sender, incase the board isn't authenticated,
-    create a new board in server and send them a new Bearer for their future requests
+    Decorator to fetch BoardID of the request sender, incase the board isn't authenticated, create a new board in server and send them a new Bearer for their future requests
     :param parentRequired: Boolean to signify if the board needs to be assigned to a parent for the later function to be executed
     :return:
     """
@@ -49,7 +48,10 @@ def getSenderBoard(parentRequired:bool) -> Callable[[Any], Callable[[], dict[str
 
 
 
-class UserClass:
+class ParentCache:
+    """
+    Handles parent related properties like which viewer object belongs to which parent entity, and their usernames and parentIDs
+    """
     def __init__(self):
         self._dummyViewer = {"USERNAME": "", "VIEWERS": []}
 
@@ -100,6 +102,12 @@ class UserClass:
                 return received.get("ParentID").decode()
 
     def parentLoginCall(self, viewer: BaseViewer, ParentID):
+        """
+        Once parent login succeeds, save the current session in database
+        :param viewer:
+        :param ParentID:
+        :return:
+        """
         username = self.getParentUserName(self.ByParentID, ParentID)
         if ParentID not in self.activeParentIDs:
             self.activeParentIDs[ParentID] = self._dummyViewer
@@ -119,7 +127,7 @@ class UserClass:
         if addEntry:
             SQLConn.execute(f"INSERT INTO parent_sessions values (\"{viewer.viewerID}\", \"{ParentID}\", \"{viewer.cookie.remoteAddress}\", \"{viewer.cookie.UA}\", \"{viewer.cookie.hostURL}\")")
 
-    def parentLogoutCall(self, viewer: BaseViewer, logout: bool = False):
+    def parentDisconnectedCall(self, viewer: BaseViewer, logout: bool = False):
         ParentID = self.getParentID(self.ByViewerID, viewer.viewerID)
         username = self.getParentUserName(self.ByViewerID, viewer.viewerID)
         if ParentID is not None and ParentID in self.activeParentIDs and viewer in self.activeParentIDs[ParentID]["VIEWERS"]:
@@ -129,7 +137,6 @@ class UserClass:
         if username in self.usernameToParentID: del self.usernameToParentID[username]
         if logout: SQLConn.execute(f"DELETE from parent_sessions WHERE ViewerID=\"{viewer.viewerID}\"")
         SQLConn.execute(f"UPDATE parents set ParentOTP=\"\" where ParentID=\"{ParentID}\"")
-
 
 def getKnownLoggedInParentID(viewer: BaseViewer):
     remoteAddr = viewer.cookie.remoteAddress
@@ -141,12 +148,10 @@ def getKnownLoggedInParentID(viewer: BaseViewer):
         if remoteAddr == received["RemoteAddr"] and userAgent == received["UserAgent"] and hostURL == received["HostURL"]:
             return received["ParentID"].decode()
 
-
 def readBoardBearer(bearer: str):
     received = SQLConn.execute(f"SELECT BoardID from boards WHERE Bearer=\"{bearer}\"")
     if received:
         return received[0]["BoardID"].decode()
-
 
 def generateBoardOTP(boardID:str):
     SQLConn.execute(f"DELETE from pending_connections where BoardID=\"{boardID}\"")
@@ -162,7 +167,6 @@ def generateBoardOTP(boardID:str):
             SQLConn.execute(f"UPDATE boards set BoardOTP=\"{OTP}\" where BoardID=\"{boardID}\"")
             return OTP
 
-
 def generateParentOTP(parentID:str):
     SQLConn.execute(f"DELETE from pending_connections where ParentID=\"{parentID}\"")
     OTP = ""
@@ -177,7 +181,6 @@ def generateParentOTP(parentID:str):
             SQLConn.execute(f"UPDATE parents set ParentOTP=\"{OTP}\" where ParentID=\"{parentID}\"")
             break
     return OTP
-
 
 
 def createNewChild(viewerObj: BaseViewer, form:dict):
@@ -216,7 +219,7 @@ def createNewBoard():
 def establishConnection(boardID, boardName, parentID):
     SQLConn.execute(f"DELETE FROM pending_connections where BoardID=\"{boardID}\"")
     SQLConn.execute(f"UPDATE boards set ParentID=\"{parentID}\", Name=\"{boardName}\" where BoardID=\"{boardID}\"")
-    for viewerObj in liveCacheManager.activeParentIDs.get(parentID, {"VIEWERS":[]}).get("VIEWERS"):
+    for viewerObj in parentCacheManager.activeParentIDs.get(parentID, {"VIEWERS":[]}).get("VIEWERS"):
         sendAssignmentForm(viewerObj)
         sendPendingBoardVerifications(viewerObj)
         sendIdleBoards(viewerObj)
@@ -351,12 +354,13 @@ def acceptBoardAnswer(BoardID:str|None):
             candiesReceived = received["CandiesReceived"]
             if isCorrect:
                 points += 10
-                if points >= 30:
+                if points >= 10:
                     points = 0
                     dropCandy = True
                     candiesReceived += 1
                 SQLConn.execute(f"UPDATE children set Points={points}, CandiesReceived={candiesReceived} where ChildID=\"{childID}\"")
-                for viewer in liveCacheManager.activeParentIDs[parentID]["VIEWERS"]: viewer.queueTurboAction(str(points), f"{childID}_points", viewer.turboApp.methods.update)
+                if parentID in parentCacheManager.activeParentIDs:
+                    for viewer in parentCacheManager.activeParentIDs[parentID]["VIEWERS"]: viewer.queueTurboAction(str(points), f"{childID}_points", viewer.turboApp.methods.update)
         response = {"PURPOSE": "SCORE", "V": True, "C": isCorrect, "O": options[correctOption - 1], "S": str(points), "D": dropCandy}
         print(response)
         return response
@@ -368,9 +372,9 @@ def sendBoardNewQuestion(BoardID:None|str):
     subject = request.args.get("subject", "")
     optionCount = int(request.args.get("optionCount")) if request.args.get("optionCount", "").isdigit() else 3
     if not subject:
-        received = SQLConn.execute("SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank limit 1")
+        received = SQLConn.execute("SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank ORDER BY RAND() limit 1")
     else:
-        received = SQLConn.execute(f"SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank where Subject=\"{subject}\" limit 1")
+        received = SQLConn.execute(f"SELECT QuestionID, Question, CorrectAnswer, WrongAnswers from questionbank where Subject=\"{subject}\" ORDER BY RAND() limit 1")
     if received:
         received = received[0]
         questionID = received["QuestionID"].decode()
@@ -417,7 +421,7 @@ def webViewerJoined(viewerObj: BaseViewer):
     print(f"Viewer Joined: {viewerObj.viewerID}")
     parentID = getKnownLoggedInParentID(viewerObj)
     if parentID:
-        liveCacheManager.parentLoginCall(viewerObj, parentID)
+        parentCacheManager.parentLoginCall(viewerObj, parentID)
         Thread(target=renderHomePage, args=(viewerObj,)).start()
     else:
         Thread(target=renderAuthPage, args=(viewerObj,)).start()
@@ -432,7 +436,7 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
     elif purpose == "REGISTER":
         registerNewParent(viewerObj, form)
     elif purpose == "LOGOUT":
-        liveCacheManager.parentLogoutCall(viewerObj, True)
+        parentCacheManager.parentDisconnectedCall(viewerObj, True)
         Thread(target=renderAuthPage, args=(viewerObj,)).start()
     elif purpose == "NEW_BOARD":
         sendNewBoardForm(viewerObj)
@@ -463,7 +467,7 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
 
 def webViewerLeft(viewerObj: BaseViewer):
     print(f"Viewer Left: {viewerObj.viewerID}")
-    liveCacheManager.parentLogoutCall(viewerObj)
+    parentCacheManager.parentDisconnectedCall(viewerObj)
 
 
 
@@ -493,7 +497,7 @@ def registerNewParent(viewerObj:BaseViewer, form:dict):
             if not SQLConn.execute(f"SELECT UserName from parent_auth where parentID=\"{parentID}\" limit 1"):
                 SQLConn.execute(f"INSERT INTO parents values (\"{parentID}\", \"{person}\", now(), \"\")")
                 SQLConn.execute(f"INSERT INTO parent_auth values (\"{parentID}\", \"{username}\", \"{generate_password_hash(password)}\")")
-                liveCacheManager.parentLoginCall(viewerObj, parentID)
+                parentCacheManager.parentLoginCall(viewerObj, parentID)
                 Thread(target=renderHomePage, args=(viewerObj,)).start()
                 break
 
@@ -510,7 +514,7 @@ def loginOldParent(viewerObj:BaseViewer, form:dict):
             viewerObj.queueTurboAction("Password Dont Match", "authWarning", viewerObj.turboApp.methods.update.value)
             Thread(target=sendLoginForm, args=(viewerObj,)).start()
         else:
-            liveCacheManager.parentLoginCall(viewerObj, received["ParentID"].decode())
+            parentCacheManager.parentLoginCall(viewerObj, received["ParentID"].decode())
             Thread(target=renderHomePage, args=(viewerObj,)).start()
 
 
@@ -566,7 +570,7 @@ f"""
 
 
 def sendParentInfo(viewerObj:BaseViewer):
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, viewerObj.viewerID)
     parentOTP = generateParentOTP(parentID)
     received = SQLConn.execute(f"SELECT ParentName from parents where ParentID=\"{parentID}\"")
     if received: parentName = received[0]["ParentName"]
@@ -583,7 +587,7 @@ f"""
 
 
 def sendAssigned(viewerObj:BaseViewer):
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, viewerObj.viewerID)
 
     assignedTableHTML = \
 """
@@ -624,7 +628,7 @@ f"""
 
 
 def sendAssignmentForm(viewerObj:BaseViewer):
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, viewerObj.viewerID)
     idleBoards = []
     idleChildren = []
     for board in SQLConn.execute(f'SELECT BoardID, Name from boards where ParentID=\"{parentID}\" and ChildID=\"\"'): idleBoards.append([board["BoardID"].decode(), board["Name"]])
@@ -651,14 +655,14 @@ f"""
 
 def sendPendingBoardVerifications(viewerObj:BaseViewer):
     viewerObj.queueTurboAction("<div id='pendingBoardVerification_create'></div>", "pendingBoardVerification", viewerObj.turboApp.methods.update, forceFlush=True)
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, viewerObj.viewerID)
     for pendingConnection in SQLConn.execute(f"SELECT BoardID, BoardName from pending_connections where ParentID=\"{parentID}\""):
         viewerObj.queueTurboAction(f"{pendingConnection['BoardName']}", "pendingBoardVerification", viewerObj.turboApp.methods.newDiv)
 
 
 def sendIdleChildren(viewerObj:BaseViewer):
     viewerObj.queueTurboAction(f"<div id='idleChildrenItem_create'></div>", "idleChildren", viewerObj.turboApp.methods.update, forceFlush=True)
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, viewerObj.viewerID)
     for child in SQLConn.execute(f"SELECT ChildID, Name from children where ParentID=\"{parentID}\" and BoardID=\"\""):
         childElement = \
 f"""
@@ -673,7 +677,7 @@ f"""
 
 def sendIdleBoards(viewerObj:BaseViewer):
     viewerObj.queueTurboAction("<div id='idleBoardItem_create'></div>", "idleBoards", viewerObj.turboApp.methods.update, forceFlush=True)
-    parentID = liveCacheManager.getParentID(liveCacheManager.ByViewerID, viewerObj.viewerID)
+    parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, viewerObj.viewerID)
     for board in SQLConn.execute(f"SELECT BoardID, Name from boards where ParentID=\"{parentID}\" and ChildID=\"\""):
         boardElement = \
             f"""
@@ -776,7 +780,6 @@ f"""
 appName =  CoreValues.appName.value
 title = CoreValues.title.value
 webBase = Routes.webHomePage.value
-webWS = Routes.webWS.value
 fernetKey = ServerSecrets.webFernetKey.value
 extraHeads = """<style>
     /* Global Styles */
@@ -905,10 +908,23 @@ baseBody = """<body><div id="root"><div id="mainDiv">Generating OTP and validati
 
 logger = LogManager()
 SQLConn = connectDB(logger)
-liveCacheManager = UserClass()
+parentCacheManager = ParentCache()
 stringGen = STR_GEN()
 baseApp, turboApp = createApps(webFormSubmit, webViewerJoined, webViewerLeft, appName, webBase, fernetKey, extraHeads, baseBody, title)
 
+
+@baseApp.get(f"{Routes.webChildStats.value}/<childID>")
+def showChildStats(childID):
+    cookieObjRequest = Cookie().readRequest(Imports.request)
+    cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
+    if cookieObj.isReadSuccessfully() and cookieObjRequest.originMatchesHost() and cookieObj.remoteAddress == cookieObjRequest.remoteAddress and cookieObj.UA == cookieObjRequest.UA and cookieObj.hostURL == cookieObjRequest.hostURL:
+        parentID = parentCacheManager.getParentID(parentCacheManager.ByViewerID, cookieObj.viewerID)
+        if parentID is not None and SQLConn.execute(f"SELECT ChildID from children where ChildID=\"{childID}\" and ParentID=\"{parentID}\""):
+            allQuestions =  SQLConn.execute(f"SELECT QuestionID, SentAt, Options, CorrectOption, OptionSelected from questionhistory where ChildID=\"{childID}\"")
+            for i in range(len(allQuestions)):
+                allQuestions[i]["Question"] = SQLConn.execute(f"SELECT Question from questionbank where QuestionID=\"{allQuestions[i]['QuestionID']}\"")[0]["Question"]
+                allQuestions[i]["Subject"] = SQLConn.execute(f"SELECT Subject from questionbank where QuestionID=\"{allQuestions[i]['QuestionID']}\"")[0]["Subject"]
+    return "You dont own the child"
 
 @baseApp.get(Routes.apiForceCheckParentConnection.value)
 @getSenderBoard(parentRequired=True)

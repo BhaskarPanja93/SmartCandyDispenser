@@ -31,7 +31,7 @@ class FormPurposes(Enum):
 
 class Routes(Enum):
     webHomePage = "/"
-    webWS = f"{webHomePage}-ws"
+    webChildStats = f"{webHomePage}-child-stats"
     apiForceCheckParentConnection = f"{webHomePage}forceParent"
     apiCheckParentAccepted = f"{webHomePage}parentAccepted"
     apiNewQuestion = f"{webHomePage}newQuestion"
