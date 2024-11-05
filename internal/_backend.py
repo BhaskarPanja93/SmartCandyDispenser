@@ -190,7 +190,6 @@ def createNewChild(viewerObj: BaseViewer, form:dict):
         childID = stringGen.AlphaNumeric(50, 50)
         if not SQLConn.execute(f"SELECT ChildID from children where ChildID=\"{childID}\" limit 1"):
             SQLConn.execute(f"INSERT INTO children values (\"{childID}\", \"{parentID}\", \"\", \"{childName}\", 0, 0, now())")
-            sendIdleChildren(viewerObj)
             return childID
 
 
@@ -202,7 +201,6 @@ def deleteOldChild(viewerObj: BaseViewer, childID:str):
         if received["BoardID"]: return print("Child not idle")
     SQLConn.execute(f"DELETE from children where ChildID=\"{childID}\" and ParentID=\"{parentID}\"")
     SQLConn.execute(f"DELETE from questionhistory where ChildID=\"{childID}\"")
-    sendIdleChildren(viewerObj)
 
 
 def createNewBoard():
@@ -291,7 +289,6 @@ def deleteOwnedBoard(viewerObj: BaseViewer, boardID:str):
         if received["ChildID"]: return print("Board is not idle")
     SQLConn.execute(f"DELETE from boards where BoardID=\"{boardID}\" and ParentID=\"{parentID}\"")
     SQLConn.execute(f"DELETE from pending_connections where BoardID=\"{boardID}\"")
-    sendIdleChildren(viewerObj)
 
 
 def deleteAssignment(viewerObj:BaseViewer, boardID:str, childID:str):
@@ -447,12 +444,15 @@ def webFormSubmit(viewerObj: BaseViewer, form: dict):
         sendNewChildForm(viewerObj)
         createNewChild(viewerObj, form)
         sendAssignmentForm(viewerObj)
+        sendIdleChildren(viewerObj)
     elif "REMOVE_BOARD" in purpose:
         deleteOwnedBoard(viewerObj, purpose.replace("REMOVE_BOARD_", ""))
         sendAssignmentForm(viewerObj)
+        sendIdleBoards(viewerObj)
     elif "REMOVE_CHILD" in purpose:
         deleteOldChild(viewerObj, purpose.replace("REMOVE_CHILD_", ""))
         sendAssignmentForm(viewerObj)
+        sendIdleChildren(viewerObj)
     elif purpose == "NEW_ASSIGNMENT":
         initiateAssignment(viewerObj, form)
         sendAssignmentForm(viewerObj)
